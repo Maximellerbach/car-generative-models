@@ -50,7 +50,7 @@ class ModelConfig:
     num_heads: int = 6  # Number of attention heads
     mlp_ratio: float = 4.0  # MLP hidden dimension ratio
     vit_dropout: float = 0.0  # Dropout rate for ViT
-    use_skip_connections: bool = True  # Use U-Net style skip connections in UViT
+    skip_connection_spacing: int = 1  # Spacing between skip connections in UViT
     
     def get(self, key: str, default=None):
         """Get attribute with default fallback."""

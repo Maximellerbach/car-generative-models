@@ -55,6 +55,7 @@ def create_model(
             num_heads=config.get("num_heads", 6),
             mlp_ratio=config.get("mlp_ratio", 4.0),
             patch_stride=config.get("patch_stride", None),
+            skip_connection_spacing=config.get("skip_connection_spacing", 1),
         )
         
     else:

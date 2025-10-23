@@ -111,6 +111,7 @@ class UViT(nn.Module):
         time_emb_dim: Optional[int] = None,
         dropout: float = 0.0,
         patch_stride: Optional[int] = None,
+        skip_connection_spacing: int = 1,
     ):
         """
         Args:
@@ -125,6 +126,8 @@ class UViT(nn.Module):
             time_emb_dim: Time embedding dimension (if None, uses embed_dim)
             dropout: Dropout rate
             patch_stride: Stride for patchify convolution (if None, uses patch_size for non-overlapping patches)
+            skip_connection_spacing: Spacing between skip connections (1 = every block, 2 = every other block, etc.)
+                                    As per U-ViT paper, long skip connections should bypass multiple blocks
         """
         super().__init__()
         
@@ -138,6 +141,7 @@ class UViT(nn.Module):
         self.embed_dim = embed_dim
         self.depth = depth
         self.num_heads = num_heads
+        self.skip_connection_spacing = skip_connection_spacing
         
         # Calculate number of patches based on stride
         # Formula: (input_size - kernel_size) / stride + 1
@@ -187,9 +191,12 @@ class UViT(nn.Module):
         ])
         
         # Skip connection projections (concatenate then project)
+        # Only create projections for spaced connections as per U-ViT paper
+        # Calculate which decoder blocks will receive skip connections
+        self.skip_indices = list(range(0, self.num_decoder_layers, skip_connection_spacing))
         self.skip_projections = nn.ModuleList([
             nn.Linear(embed_dim * 2, embed_dim)
-            for _ in range(self.num_decoder_layers)
+            for _ in self.skip_indices
         ])
         
         # Long skip connection from input patches to output (before unpatchify)
@@ -268,18 +275,24 @@ class UViT(nn.Module):
         
         # Encoder: Apply shallow blocks and store skip connections
         skip_connections = []
-        for block in self.shallow_blocks:
+        for i, block in enumerate(self.shallow_blocks):
             x = block(x)
-            skip_connections.append(x)
+            # Only store skip connections at specified spacing intervals
+            # Store from the end of encoder to match with decoder blocks
+            if (self.num_encoder_layers - 1 - i) in self.skip_indices:
+                skip_connections.append(x)
         
-        # Decoder: Apply deep blocks with skip connections
-        skip_connections = skip_connections[::-1]  # Reverse for U-Net style
-        
+        # Decoder: Apply deep blocks with spaced skip connections
+        # Skip connections were stored in reverse order during encoding
+        skip_idx = 0
         for i, block in enumerate(self.deep_blocks):
             x = block(x)
-            skip = skip_connections[i]
-            x = torch.cat([x, skip], dim=-1)
-            x = self.skip_projections[i](x)
+            # Apply skip connection only at specified spacing intervals
+            if i in self.skip_indices and skip_idx < len(skip_connections):
+                skip = skip_connections[skip_idx]
+                x = torch.cat([x, skip], dim=-1)
+                x = self.skip_projections[skip_idx](x)
+                skip_idx += 1
 
         # Remove time token: (batch, num_patches + 1, embed_dim) -> (batch, num_patches, embed_dim)
         x = x[:, 1:, :]
