@@ -4,8 +4,9 @@ import argparse
 from pathlib import Path
 import torch
 from torch.utils.data import DataLoader
+from torchvision import transforms
 
-from car_diffusion import Config, DiffusionModel, CarImageDataset, Trainer, create_model
+from car_diffusion import Config, CustomImageDataset, Trainer, build_model
 
 
 def parse_args():
@@ -28,20 +29,28 @@ def parse_args():
 def build_dataloaders(config):
     print(f"Loading dataset from {config.data.dataset_path}")
 
-    train_dataset = CarImageDataset(
+    transform = transforms.Compose([
+        transforms.Resize((int(config.data.image_height * 1.2), int(config.data.image_width * 1.2))),
+        # data augm
+        transforms.RandomHorizontalFlip(),
+        transforms.RandomRotation(10, expand=True),
+        transforms.CenterCrop((config.data.image_height, config.data.image_width)),
+        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
+        transforms.ToTensor(),
+        # normalize to [-1, 1]
+        transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
+    ])
+
+    train_dataset = CustomImageDataset(
         dataset_path=config.data.dataset_path,
-        image_height=config.data.image_height,
-        image_width=config.data.image_width,
         split="train",
-        train_split=config.data.train_split,
+        transform=transform,
     )
 
-    val_dataset = CarImageDataset(
+    val_dataset = CustomImageDataset(
         dataset_path=config.data.dataset_path,
-        image_height=config.data.image_height,
-        image_width=config.data.image_width,
         split="val",
-        train_split=config.data.train_split,
+        transform=transform,
     )
 
     print(f"Train samples: {len(train_dataset)}, Val samples: {len(val_dataset)}")
@@ -63,28 +72,6 @@ def build_dataloaders(config):
     )
 
     return train_loader, val_loader
-
-
-def build_model(config):
-    print("Initializing model and DiffusionModel...")
-
-    # Use model factory to create the appropriate architecture
-    model = create_model(
-        config=config.model,
-        image_height=config.data.image_height,
-        image_width=config.data.image_width,
-    )
-
-    diffusion = DiffusionModel(
-        model=model,
-        image_size=(config.data.image_height, config.data.image_width),
-        timesteps=config.model.num_timesteps,
-        beta_start=config.model.beta_start,
-        beta_end=config.model.beta_end,
-    )
-
-
-    return diffusion
 
 
 def main():
@@ -110,20 +97,12 @@ def main():
         config=config,
         train_loader=train_loader,
         val_loader=val_loader,
+        checkpoint=Path(args.resume) if args.resume else None,
     )
-
-    # Resume training if checkpoint provided
-    if args.resume:
-        ckpt_path = Path(args.resume)
-        if ckpt_path.exists():
-            print(f"Resuming training from checkpoint: {ckpt_path}")
-            trainer.load_checkpoint(ckpt_path)
-        else:
-            print(f" Warning: Checkpoint not found at {ckpt_path}. Starting fresh.")
 
     # Train the model
     print("Starting training loop...")
-    trainer.train(epochs=config.training.epochs)
+    trainer.train()
 
     # Save final model
     checkpoint_dir = Path(config.training.checkpoint_dir)

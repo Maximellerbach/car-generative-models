@@ -26,7 +26,7 @@ def create_model(
     Raises:
         ValueError: If architecture type is not supported
     """
-    architecture = config.get("architecture", "unet").lower()
+    architecture = config.architecture.lower()
     
     if architecture == "unet":
         print("Creating UNet model...")
@@ -37,10 +37,8 @@ def create_model(
             model_channels=config.model_channels,
             channel_multipliers=config.channel_multipliers,
             num_res_blocks=config.num_res_blocks,
-            time_emb_dim=config.get("time_emb_dim", 256),
-            use_attention=config.get("use_attention", True),
-            attention_resolutions=tuple(config.get("attention_resolutions", [1])),
-            attention_type=config.get("attention_type", "channel"),
+            time_emb_dim=config.time_emb_dim,
+            use_attention_at=tuple(config.use_attention_at),
         )
         
     elif architecture == "uvit":
@@ -49,13 +47,13 @@ def create_model(
             image_height=image_height,
             image_width=image_width,
             channels=config.channels,
-            patch_size=config.get("patch_size", 8),
-            embed_dim=config.get("embed_dim", 384),
-            depth=config.get("depth", 12),
-            num_heads=config.get("num_heads", 6),
-            mlp_ratio=config.get("mlp_ratio", 4.0),
-            patch_stride=config.get("patch_stride", None),
-            skip_connection_spacing=config.get("skip_connection_spacing", 1),
+            patch_size=config.patch_size,
+            embed_dim=config.embed_dim,
+            depth=config.depth,
+            num_heads=config.num_heads,
+            mlp_ratio=config.mlp_ratio,
+            patch_stride=config.patch_stride,
+            skip_connection_spacing=config.skip_connection_spacing,
         )
         
     else:

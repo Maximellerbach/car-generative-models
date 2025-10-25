@@ -3,6 +3,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from tqdm import tqdm
 
+from .config import Config
+from .model_factory import create_model
 
 class DiffusionModel(nn.Module):
     """
@@ -121,3 +123,24 @@ class DiffusionModel(nn.Module):
 
                 if step % log_interval == 0:
                     print(f"Epoch {epoch} Step {step}: Loss = {loss.item():.4f}")
+
+def build_model(config: Config) -> DiffusionModel:
+    print("Initializing model and DiffusionModel...")
+    im_w, im_h = config.data.image_width, config.data.image_height
+
+    # Use model factory to create the appropriate architecture
+    model = create_model(
+        config=config.model,
+        image_height=im_h,
+        image_width=im_w,
+    )
+
+    diffusion = DiffusionModel(
+        model=model,
+        image_size=(im_h, im_w),
+        timesteps=config.model.num_timesteps,
+        beta_start=config.model.beta_start,
+        beta_end=config.model.beta_end,
+    )
+
+    return diffusion

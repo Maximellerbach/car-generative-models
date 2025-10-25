@@ -7,14 +7,11 @@ import torch
 
 
 def plot_images(
-    images: torch.Tensor,
+    images: np.ndarray,
     save_path: Optional[Path] = None,
     title: str = "Generated Images",
     num_images: int = 16,
 ) -> None:
-    if isinstance(images, torch.Tensor):
-        images = images.detach().cpu().numpy()
-    
     if images.shape[1] in [1, 3]:
         images = np.transpose(images, (0, 2, 3, 1))
     
@@ -31,9 +28,7 @@ def plot_images(
     
     for idx in range(num_images):
         ax = axes[idx]
-        
-        img = np.clip(img, -1, 1)
-        img = (images[idx] + 1) / 2
+        img = images[idx]
         
         if img.shape[2] == 1:
             img = img.squeeze(2)

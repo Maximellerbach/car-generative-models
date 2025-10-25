@@ -5,22 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
-class SinusoidalPosEmb(nn.Module):
-    def __init__(self, dim: int):
-        super().__init__()
-        self.dim = dim
-
-    def forward(self, t: torch.Tensor) -> torch.Tensor:
-        # t: (batch,)
-        device = t.device
-        half = self.dim // 2
-        emb = torch.exp(torch.arange(half, device=device) * -(math.log(10000) / (half - 1)))
-        emb = t[:, None] * emb[None, :]
-        emb = torch.cat([torch.sin(emb), torch.cos(emb)], dim=-1)
-        if self.dim % 2:
-            emb = F.pad(emb, (0, 1))
-        return emb
+from .model_utils import SinusoidalPosEmb, AttentionBlock
 
 
 class FeedForward(nn.Module):
@@ -69,41 +54,6 @@ class ResidualBlock(nn.Module):
         return h + self.res_conv(x)
 
 
-class AttentionBlock(nn.Module):
-    def __init__(self, channels: int, num_heads: int = 1):
-        super().__init__()
-        self.num_heads = num_heads
-        self.norm = nn.GroupNorm(8, channels)
-        self.qkv = nn.Conv1d(channels, channels * 3, kernel_size=1)
-        self.proj = nn.Conv1d(channels, channels, kernel_size=1)
-
-    def forward(self, x):
-        # x: (b, c, h, w)
-        b, c, h, w = x.shape
-        x_in = x
-        x = self.norm(x)
-        x = x.view(b, c, h * w)  # (b, c, n)
-
-        qkv = self.qkv(x)  # (b, 3c, n)
-        q, k, v = torch.chunk(qkv, 3, dim=1)
-
-        # split heads
-        q = q.view(b, self.num_heads, c // self.num_heads, -1)
-        k = k.view(b, self.num_heads, c // self.num_heads, -1)
-        v = v.view(b, self.num_heads, c // self.num_heads, -1)
-
-        scale = 1.0 / math.sqrt(c // self.num_heads)
-        attn = torch.einsum('bhcn,bhcm->bhnm', q * scale, k * scale)
-        attn = torch.softmax(attn, dim=-1)
-
-        out = torch.einsum('bhnm,bhcm->bhcn', attn, v)
-        out = out.contiguous().view(b, c, -1)
-        out = self.proj(out)
-        out = out.view(b, c, h, w)
-
-        return out + x_in
-
-
 class Downsample(nn.Module):
     def __init__(self, channels: int):
         super().__init__()
@@ -139,20 +89,18 @@ class UNet(nn.Module):
         time_emb_dim: Dimension of time embedding
         use_attention: Whether to use attention blocks
         attention_resolutions: Tuple indicating which resolution levels get attention
-        attention_type: Type of attention to use (for future extensions)
     """
 
     def __init__(
         self,
-        image_height: int = 100,
-        image_width: int = 150,
+        image_height: int = 96,
+        image_width: int = 144,
         channels: int = 3,
         model_channels: int = 64,
         channel_multipliers: tuple = (1, 2, 4, 8),
         num_res_blocks: int = 2,
         time_emb_dim: int = 256,
-        use_attention: bool = True,
-        attention_resolutions: tuple = (False, False, True, True),
+        use_attention_at: tuple = (False, False, True, True),
     ):
         super().__init__()
         
@@ -161,13 +109,7 @@ class UNet(nn.Module):
         self.image_width = image_width
         self.channels = channels
         
-        # Convert attention_resolutions to boolean tuple if it's a list of indices
-        if attention_resolutions and isinstance(attention_resolutions[0], int):
-            # If attention_resolutions contains indices like (1,), convert to boolean tuple
-            use_attention_at = tuple(i in attention_resolutions for i in range(len(channel_multipliers)))
-        else:
-            # Otherwise assume it's already a boolean tuple
-            use_attention_at = attention_resolutions if attention_resolutions else (False,) * len(channel_multipliers)
+        use_attention_at = use_attention_at if use_attention_at else (False,) * len(channel_multipliers)
         
         # Ensure use_attention_at has the right length
         if len(use_attention_at) < len(channel_multipliers):
@@ -192,8 +134,7 @@ class UNet(nn.Module):
             for _ in range(num_res_blocks):
                 self.resblocks_down.append(ResidualBlock(in_ch, out_ch, time_emb_dim))
                 in_ch = out_ch
-            # Use attention if globally enabled AND this resolution level should have it
-            attn = AttentionBlock(out_ch) if (use_attention and use_attention_at[i]) else nn.Identity()
+            attn = AttentionBlock(out_ch) if (use_attention_at[i]) else nn.Identity()
             self.downs.append(nn.ModuleDict({
                 'attn': attn,
                 'down': Downsample(out_ch) if i != len(channel_multipliers) - 1 else nn.Identity()
@@ -201,7 +142,7 @@ class UNet(nn.Module):
 
         # middle
         self.mid_block1 = ResidualBlock(in_ch, in_ch, time_emb_dim)
-        self.mid_attn = AttentionBlock(in_ch) if use_attention else nn.Identity()
+        self.mid_attn = AttentionBlock(in_ch)
         self.mid_block2 = ResidualBlock(in_ch, in_ch, time_emb_dim)
 
         # decoder
@@ -215,8 +156,8 @@ class UNet(nn.Module):
                 in_channels_for_block = in_ch + out_ch if j == 0 else in_ch
                 self.resblocks_up.append(ResidualBlock(in_channels_for_block, out_ch, time_emb_dim))
                 in_ch = out_ch
-            # Use attention if globally enabled AND this resolution level should have it
-            attn = AttentionBlock(out_ch) if (use_attention and use_attention_at[i]) else nn.Identity()
+
+            attn = AttentionBlock(out_ch) if (use_attention_at[i]) else nn.Identity()
             self.ups.append(nn.ModuleDict({
                 'attn': attn,
                 'up': Upsample(out_ch) if i != 0 else nn.Identity()

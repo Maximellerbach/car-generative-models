@@ -1,14 +1,16 @@
 """Training loop for diffusion models."""
 
-from tqdm import tqdm
+from pathlib import Path
+
+import cv2
+import numpy as np
 import torch
 import torch.nn as nn
+from torch.amp.autocast_mode import autocast
+from torch.amp.grad_scaler import GradScaler
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
-from pathlib import Path
-import numpy as np
-import cv2
-from torch.amp import autocast, GradScaler
+from tqdm import tqdm
 
 from .config import Config
 from .diffusion import DiffusionModel
@@ -22,7 +24,8 @@ class Trainer:
         model: DiffusionModel,
         config: Config,
         train_loader: DataLoader,
-        val_loader: DataLoader = None,
+        val_loader: DataLoader,
+        checkpoint: Path | None = None,
     ):
         """Initialize trainer."""
         self.model = model
@@ -43,23 +46,19 @@ class Trainer:
             torch.backends.cuda.enable_mem_efficient_sdp(True)
             torch.backends.cuda.enable_flash_sdp(True)
 
-        self.model = torch.compile(
-            self.model,
-            mode='reduce-overhead',
-            fullgraph=False,
-        )
+        self.model = torch.compile(self.model)
 
         # Optimizer
         self.optimizer = AdamW(
             self.model.parameters(),
             lr=config.training.learning_rate,
             betas=(0.9, 0.99),
-            weight_decay=config.training.get("weight_decay", 0.01),
+            weight_decay=config.training.weight_decay,
             eps=1e-8,
         )
 
         # AMP setup
-        self.use_amp = config.training.get("use_amp", True)
+        self.use_amp = config.training.use_amp
         self.scaler = GradScaler('cuda') if self.use_amp else None
 
         self.loss_fn = nn.MSELoss()
@@ -69,16 +68,19 @@ class Trainer:
         self.global_step = 0
         self.start_epoch = 0
 
-    def train(self, epochs: int = None):
-        if epochs is None:
-            epochs = self.config.training.epochs
+        if checkpoint:
+            self.load_checkpoint(checkpoint)
+            print(f"Resuming training from checkpoint: {checkpoint}")
 
+    def train(self):
         self.model.train()
 
+        epochs = self.config.training.epochs
         for epoch in range(self.start_epoch, epochs):
             epoch_loss = 0.0
 
-            for step, batch in tqdm(enumerate(self.train_loader), total=len(self.train_loader)):
+            pbar = tqdm(enumerate(self.train_loader), total=len(self.train_loader), ncols=80)
+            for step, batch in pbar:
                 batch = batch.to(self.device)
                 batch_size = batch.shape[0]
 
@@ -88,7 +90,7 @@ class Trainer:
 
                 self.optimizer.zero_grad()
 
-                if self.use_amp:
+                if self.scaler:
                     with autocast('cuda'):
                         loss = self.model.p_losses(batch, t)
                     self.scaler.scale(loss).backward()
@@ -108,14 +110,10 @@ class Trainer:
                     )
                     self.optimizer.step()
 
-                if step % 100 == 0:
-                    print(
-                        f"Epoch [{epoch + 1}/{epochs}] Step [{step}/{len(self.train_loader)}] "
-                        f"Loss: {loss.item():.6f}"
-                    )
-
                 epoch_loss += loss.item()
                 self.global_step += 1
+
+                pbar.set_postfix({"loss": f"{loss.item():.4f}", "epoch": f"{epoch + 1}/{epochs}"})
 
             # Validation
             if self.val_loader is not None:
@@ -126,8 +124,9 @@ class Trainer:
             if (epoch + 1) % self.config.training.save_interval == 0:
                 self.save_checkpoint(epoch + 1)
 
-            # Generate samples
-            self.generate_and_save_sample(epoch=epoch + 1, num_images=4)
+            if (epoch + 1) % self.config.training.sample_interval == 0:
+                # Generate samples
+                self.generate_and_save_sample(epoch=epoch + 1, num_images=4)
 
     def validate(self) -> float:
         self.model.eval()
@@ -169,7 +168,7 @@ class Trainer:
         with torch.no_grad():
             x = self.model.sample(batch_size=num_images, num_steps=self.config.generation.num_inference_steps, channels=self.config.model.channels)
             x = torch.clamp(x, -1.0, 1.0)
-            x = (x + 1.0) / 2.0  # [-1,1] → [0,1]
+            x = (x + 1.0) / 2.0
 
             for i in range(num_images):
                 img_tensor = x[i].permute(1, 2, 0).cpu().numpy()
@@ -184,7 +183,7 @@ class Trainer:
                 cv2.imwrite(str(save_path), img_tensor)
         self.model.train()
 
-    def load_checkpoint(self, checkpoint_path: str):
+    def load_checkpoint(self, checkpoint_path: str | Path):
         checkpoint = torch.load(checkpoint_path, map_location=self.device)
         self.model.load_state_dict(checkpoint["model_state_dict"])
         self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])

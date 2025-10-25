@@ -1,0 +1,36 @@
+data:
+  dataset_path: "/home/maxime/dataset/car_images"
+  batch_size: 64
+  image_height: 96
+  image_width: 144
+  num_workers: 8
+
+model:
+  channels: 3
+  num_timesteps: 1000
+  beta_start: 0.0001
+  beta_end: 0.01
+
+  architecture: "unet"
+  model_channels: 32  # Base number of channels in the UNet
+  channel_multipliers: [1, 2, 4, 8]
+  num_res_blocks: 1
+  time_emb_dim: 256
+  
+  # Attention parameters (for UNet)
+  use_attention_at: [False, False, False, True]  # Which resolution levels get attention
+
+generation:
+  num_images: 16
+  num_inference_steps: 1000
+  save_dir: "outputs"
+
+training:
+  checkpoint_dir: "checkpoints"
+  epochs: 200
+  learning_rate: 0.0001
+  max_grad_norm: 1.0
+  save_interval: 10
+  use_amp: true
+  weight_decay: 0.001
+  sample_interval: 1

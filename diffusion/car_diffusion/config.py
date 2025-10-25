@@ -13,13 +13,6 @@ class DataConfig:
     image_height: int = 100
     image_width: int = 150
     num_workers: int = 4
-    train_split: float = 0.8
-
-    def __post_init__(self):
-        self.dataset_path = Path(self.dataset_path)
-        if not self.dataset_path.exists():
-            raise ValueError(f"Dataset path does not exist: {self.dataset_path}")
-
 
 @dataclass
 class ModelConfig:
@@ -38,9 +31,7 @@ class ModelConfig:
     time_emb_dim: int = 256  # Dimension of time embedding
     
     # Attention parameters (for UNet)
-    use_attention: bool = False  # Whether to use attention blocks
-    attention_resolutions: tuple = (1,)  # Resolution indices that get attention (e.g., (1,) means second level)
-    attention_type: str = "channel"  # Type of attention: "channel" or "efficient_spatial"
+    use_attention_at: tuple = (False, True)  # Which resolution levels get attention
     
     # Vision Transformer (ViT/UViT) parameters
     patch_size: int = 5  # Size of patches for ViT
@@ -63,6 +54,7 @@ class TrainingConfig:
     learning_rate: float = 1e-4
     checkpoint_dir: Path = Path("checkpoints")
     save_interval: int = 10
+    sample_interval: int = 5
     device: str = "cuda"
     max_grad_norm: float = 1.0
     weight_decay: float = 0.01
@@ -91,17 +83,9 @@ class GenerationConfig:
 @dataclass
 class Config:
     data: DataConfig
-    model: ModelConfig = None
-    training: TrainingConfig = None
-    generation: GenerationConfig = None
-
-    def __post_init__(self):
-        if self.model is None:
-            self.model = ModelConfig()
-        if self.training is None:
-            self.training = TrainingConfig()
-        if self.generation is None:
-            self.generation = GenerationConfig()
+    model: ModelConfig
+    training: TrainingConfig
+    generation: GenerationConfig
 
     @staticmethod
     def from_yaml(config_path: Path) -> "Config":
@@ -125,17 +109,13 @@ class Config:
             training=training_config,
             generation=generation_config,
         )
-
-    @staticmethod
-    def from_cli_args(dataset_path: str, config_path: Optional[Path] = None) -> "Config":
-        if config_path:
-            config = Config.from_yaml(config_path)
-            config.data.dataset_path = Path(dataset_path)
-        else:
-            config = Config(
-                data=DataConfig(dataset_path=dataset_path),
-                model=ModelConfig(),
-                training=TrainingConfig(),
-            )
-        
-        return config
+    
+    def save_to_yaml(self, config_path: Path):
+        config_dict = {
+            "data": self.data.__dict__,
+            "model": self.model.__dict__,
+            "training": self.training.__dict__,
+            "generation": self.generation.__dict__,
+        }
+        with open(config_path, "w") as f:
+            yaml.dump(config_dict, f)

@@ -1,19 +1,20 @@
 __version__ = "0.1.0"
 
 from .config import Config
-from .diffusion import DiffusionModel
+from .diffusion import DiffusionModel, build_model
 from .unet_model import UNet
 from .transformer_model import UViT
-from .dataset import CarImageDataset
+from .dataset import CustomImageDataset
 from .trainer import Trainer
-from .model_factory import create_model
+from .utils import plot_images
 
 __all__ = [
     "Config",
     "DiffusionModel",
     "UNet",
     "UViT",
-    "CarImageDataset",
+    "CustomImageDataset",
     "Trainer",
-    "create_model",
+    "build_model",
+    "plot_images",
 ]
